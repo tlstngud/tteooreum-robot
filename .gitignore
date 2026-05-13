@@ -1,0 +1,25 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# Local run artifacts
+artifacts/
+.codex_tmp/
+.codex_tmp_remote/
+
+# Large vendor/manual bundles kept locally, not in GitHub
+*.zip
+*.ppt
+*.pptx
+*.pdf
+
+# Local agent notes can contain lab IPs, passwords, and debugging history.
+AGENTS.md
+

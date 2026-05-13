@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SerBot 현장 관제실</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <div class="background-grid" aria-hidden="true"></div>
+    <div class="app-shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">AIoT SerBot · 한국어 현장 콘솔</p>
+          <h1>주행, 영상, 센서, 코딩을 한 화면에서 처리합니다.</h1>
+          <p class="hero-lede">
+            기본 속도는 10 이하로 제한했습니다. SSH 브리지로 로봇을 제어하고,
+            MJPEG 스트림으로 영상을 직접 받아오며, Python 코드를 이 화면에서 바로 실행합니다.
+          </p>
+        </div>
+        <aside class="hero-panel">
+          <div class="status-pill" id="bridgeStatePill">연결 준비</div>
+          <div class="hero-metrics">
+            <span id="bridgeSummary">브리지: 로컬 데모</span>
+            <span id="uptimeText">가동 시간: 0.0초</span>
+          </div>
+          <button class="danger-action" data-direction="stop">즉시 정지</button>
+        </aside>
+      </header>
+
+      <main class="control-room">
+        <section class="panel video-panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">영상</p>
+              <h2>카메라 라이브</h2>
+            </div>
+            <span class="mini-badge" id="cameraStatus">영상 대기 중</span>
+          </div>
+          <div class="camera-frame">
+            <img id="cameraFrame" alt="로봇 카메라 화면" src="/api/camera/frame" />
+          </div>
+          <div class="video-actions">
+            <button class="primary-btn" id="cameraToggleButton">실시간 시작</button>
+            <button class="ghost-btn" id="cameraRefreshButton">스트림 재연결</button>
+            <a class="ghost-link" id="streamUrlOpen" href="#" target="_blank" rel="noreferrer">스트림 열기</a>
+          </div>
+          <div class="stream-console">
+            <label>
+              스트림 URL
+              <input id="cameraStreamUrl" type="text" placeholder="http://threnody.local:8766/stream.mjpg" />
+            </label>
+            <div class="stream-grid">
+              <label>가로 <input id="streamWidth" type="number" value="640" min="160" max="1280" /></label>
+              <label>세로 <input id="streamHeight" type="number" value="360" min="120" max="720" /></label>
+              <label>FPS <input id="streamFps" type="number" value="10" min="1" max="30" /></label>
+              <label>화질 <input id="streamQuality" type="number" value="70" min="35" max="92" /></label>
+            </div>
+            <div class="video-actions">
+              <button class="primary-btn" id="streamStartButton">로봇 스트림 시작</button>
+              <button class="ghost-btn" id="streamStopButton">스트림 중지</button>
+              <button class="ghost-btn" id="streamStablePreset">안정값</button>
+              <button class="ghost-btn" id="streamFastPreset">30fps 도전</button>
+            </div>
+            <p class="hint" id="streamUrlText">권장 시작값: 640×360 / 10fps / quality 70</p>
+          </div>
+        </section>
+
+        <section class="panel drive-panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">주행</p>
+              <h2>방향 패드</h2>
+            </div>
+            <span class="mini-badge">최대 속도 10</span>
+          </div>
+          <div class="control-pad">
+            <button class="dir-btn north" data-direction="forward"><strong>↑</strong><span>전진</span></button>
+            <button class="dir-btn west" data-direction="spin-left"><strong>↺</strong><span>좌회전</span></button>
+            <button class="stop-btn center" data-direction="stop"><span>정지</span></button>
+            <button class="dir-btn east" data-direction="spin-right"><strong>↻</strong><span>우회전</span></button>
+            <button class="dir-btn south" data-direction="backward"><strong>↓</strong><span>후진</span></button>
+          </div>
+          <div class="slider-group">
+            <label for="speedRange">속도 <b id="speedValue">6</b></label>
+            <input id="speedRange" type="range" min="0" max="10" value="6" />
+          </div>
+          <div class="slider-group">
+            <label for="durationRange">주행 시간 <b id="durationValue">0.8초</b></label>
+            <input id="durationRange" type="range" min="1" max="60" value="8" />
+          </div>
+          <div class="preset-row">
+            <button class="preset-btn" data-speed="4" data-duration="0.6">살짝</button>
+            <button class="preset-btn" data-speed="7" data-duration="0.8">표준</button>
+            <button class="preset-btn" data-speed="10" data-duration="1.0">상한</button>
+          </div>
+          <p class="shortcut">키보드: <kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd>, 정지 <kbd>Space</kbd></p>
+          <div class="flash-line" id="controlFlash">명령 대기 중</div>
+        </section>
+
+        <section class="panel code-panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">코딩</p>
+              <h2>블록 코딩 실행실</h2>
+            </div>
+            <span class="mini-badge" id="codeStatus">대기</span>
+          </div>
+          <div class="block-coding">
+            <div class="block-palette" id="blockPalette">
+              <button class="block-chip move" data-block-type="move">이동</button>
+              <button class="block-chip drive" data-block-type="drive">정밀 주행</button>
+              <button class="block-chip wait" data-block-type="wait">기다리기</button>
+              <button class="block-chip sensor" data-block-type="ultra">초음파 읽기</button>
+              <button class="block-chip sensor" data-block-type="camera">사진 저장</button>
+              <button class="block-chip sensor" data-block-type="lidar">LiDAR 읽기</button>
+              <button class="block-chip stop" data-block-type="stop">정지</button>
+            </div>
+            <div class="block-program-wrap">
+              <div class="terminal-head">
+                <span>실행 순서</span>
+                <div>
+                  <button class="ghost-btn small" id="clearBlocksButton">블록 비우기</button>
+                  <button class="primary-btn small" id="runBlocksButton">블록 실행</button>
+                </div>
+              </div>
+              <div class="block-program" id="blockProgram"></div>
+            </div>
+          </div>
+          <div class="code-toolbar">
+            <label>
+              Python 예제
+              <select id="codeTemplateSelect">
+                <option value="status">상태 + 초음파 읽기</option>
+                <option value="safeMove">안전 저속 전진</option>
+                <option value="camera">카메라 스냅샷</option>
+                <option value="lidar">LiDAR 한 프레임</option>
+              </select>
+            </label>
+            <label>
+              제한 시간
+              <input id="codeTimeout" type="number" value="20" min="1" max="30" />
+            </label>
+            <button class="primary-btn" id="runCodeButton">코드 실행</button>
+            <button class="ghost-btn" id="copyCodeButton">코드 복사</button>
+          </div>
+          <p class="hint">
+            블록을 누르면 아래 Python 코드가 자동 생성됩니다. 직접 수정해서 실행할 수도 있습니다.
+            코드 실행 대상은 SSH 브리지 설정을 따르고, 대상이 비어 있으면 <code>soda@threnody.local</code>을 사용합니다.
+          </p>
+          <textarea id="codeEditor" spellcheck="false"></textarea>
+          <div class="terminal-head">
+            <span>실행 결과</span>
+            <button class="ghost-btn small" id="clearOutputButton">비우기</button>
+          </div>
+          <pre id="codeOutput" class="code-output">아직 실행 결과가 없습니다.</pre>
+        </section>
+
+        <section class="panel sensor-panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">센서</p>
+              <h2>초음파 상태</h2>
+            </div>
+            <span class="mini-badge" id="bridgeTarget">로컬 데모 모드</span>
+          </div>
+          <div class="sensor-grid">
+            <article><span>전방 좌측</span><strong id="frontLeftValue">0 cm</strong></article>
+            <article><span>전방 우측</span><strong id="frontRightValue">0 cm</strong></article>
+            <article><span>좌측</span><strong id="leftValue">0 cm</strong></article>
+            <article><span>우측</span><strong id="rightValue">0 cm</strong></article>
+            <article><span>후방 좌측</span><strong id="rearLeftValue">0 cm</strong></article>
+            <article><span>후방 우측</span><strong id="rearRightValue">0 cm</strong></article>
+          </div>
+          <div class="state-strip">
+            <div><span>맵</span><strong id="mapName">Demo Warehouse Loop</strong></div>
+            <div><span>좌표계</span><strong id="mapFrame">map</strong></div>
+            <div><span>현재 위치</span><strong id="poseText">x 0.00 / y 0.00 / 방향 0°</strong></div>
+            <div><span>배터리</span><strong id="batteryText">84.0%</strong></div>
+            <div><span>최근 오류</span><strong id="bridgeError">없음</strong></div>
+            <div><span>맵 정보</span><strong><i id="resolutionText">0.08 m</i> · <i id="mapSizeText">72 × 48</i></strong></div>
+          </div>
+        </section>
+
+        <section class="panel map-panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">맵</p>
+              <h2>점유 그리드</h2>
+            </div>
+            <div class="map-toolbar">
+              <label class="upload-chip">맵 JSON <input id="mapFileInput" type="file" accept=".json,application/json" /></label>
+              <label class="zoom-chip">확대 <input id="zoomRange" type="range" min="60" max="240" value="100" /></label>
+              <button class="ghost-btn" id="resetDemoButton">데모 초기화</button>
+            </div>
+          </div>
+          <div class="map-stage">
+            <canvas id="mapCanvas"></canvas>
+          </div>
+          <div class="legend">
+            <span><i class="legend-swatch occupied"></i> 점유</span>
+            <span><i class="legend-swatch unknown"></i> 미확정</span>
+            <span><i class="legend-swatch route"></i> 이동 경로</span>
+          </div>
+        </section>
+
+        <section class="panel bridge-panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">연결</p>
+              <h2>SSH 브리지</h2>
+            </div>
+          </div>
+          <form id="bridgeForm" class="bridge-form">
+            <label>연결 방식 <select id="bridgeMode"><option value="mock">로컬 데모</option><option value="ssh">SSH 원격</option></select></label>
+            <label>SSH 대상 <input id="sshTarget" type="text" placeholder="soda@threnody.local" /></label>
+            <label>비밀번호 <input id="sshPassword" type="password" placeholder="기본값 soda" /></label>
+            <label>런타임 경로 <input id="runtimePath" type="text" value="/home/soda/ros_ws/tools/serbot_runtime.py" /></label>
+            <label>카메라 서버 경로 <input id="cameraStreamPath" type="text" value="/home/soda/ros_ws/tools/camera_stream_server.py" /></label>
+            <button type="submit" class="primary-btn">브리지 적용</button>
+          </form>
+          <p class="hint" id="bridgeMessage">SSH 원격으로 바꾸면 주행, 센서, 코드 실행 환경이 같은 로봇을 바라봅니다.</p>
+        </section>
+
+        <section class="panel log-panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">기록</p>
+              <h2>최근 이벤트</h2>
+            </div>
+          </div>
+          <ul class="log-list" id="logList"></ul>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

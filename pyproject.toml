@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tteooreum-robot"
+version = "0.1.0"
+description = "Local control library and dashboard for the Hanback AIoT SerBot robot."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "Tteooreum Robot Team" }
+]
+dependencies = []
+
+[project.scripts]
+goal = "serbot_control.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["serbot_control*"]
+

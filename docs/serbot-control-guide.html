@@ -1,0 +1,566 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SerBot 제어 라이브러리 사용설명서</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f3f6f5;
+        --paper: #ffffff;
+        --ink: #17201f;
+        --muted: #66736f;
+        --line: #d9e1de;
+        --code: #111817;
+        --code-bg: #edf3f1;
+        --accent: #0f766e;
+        --accent-2: #bd5b00;
+        --danger: #b42318;
+        --ok: #19703c;
+        --shadow: 0 18px 45px rgba(20, 32, 30, 0.12);
+        --radius: 8px;
+        font-family:
+          "Pretendard Variable",
+          "Apple SD Gothic Neo",
+          "Noto Sans KR",
+          system-ui,
+          sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background:
+          linear-gradient(120deg, rgba(15, 118, 110, 0.12), transparent 34%),
+          linear-gradient(180deg, #f7faf9 0%, var(--bg) 100%);
+        color: var(--ink);
+      }
+
+      a {
+        color: var(--accent);
+        text-decoration-thickness: 2px;
+      }
+
+      .shell {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 34px 20px 64px;
+      }
+
+      header {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 24px;
+        align-items: start;
+        padding: 30px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: rgba(255, 255, 255, 0.88);
+        box-shadow: var(--shadow);
+      }
+
+      h1,
+      h2,
+      h3 {
+        margin: 0;
+        line-height: 1.2;
+      }
+
+      h1 {
+        max-width: 820px;
+        font-size: clamp(2rem, 5vw, 4rem);
+        letter-spacing: 0;
+      }
+
+      h2 {
+        font-size: 1.55rem;
+      }
+
+      h3 {
+        font-size: 1.03rem;
+      }
+
+      p {
+        line-height: 1.72;
+      }
+
+      .subtitle {
+        max-width: 820px;
+        margin: 16px 0 0;
+        color: var(--muted);
+        font-size: 1.05rem;
+      }
+
+      .status-box {
+        min-width: 260px;
+        padding: 18px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: #f8fbfa;
+      }
+
+      .status-box strong {
+        display: block;
+        margin-bottom: 6px;
+      }
+
+      .status-box code {
+        overflow-wrap: anywhere;
+      }
+
+      nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin: 22px 0;
+      }
+
+      nav a {
+        display: inline-flex;
+        align-items: center;
+        min-height: 40px;
+        padding: 9px 12px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--paper);
+        color: var(--ink);
+        text-decoration: none;
+        font-weight: 700;
+      }
+
+      section {
+        margin-top: 20px;
+        padding: 26px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--paper);
+        box-shadow: 0 10px 28px rgba(20, 32, 30, 0.07);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+        margin-top: 16px;
+      }
+
+      .two {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .tile {
+        padding: 16px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: #fbfdfc;
+      }
+
+      .tile p {
+        margin: 8px 0 0;
+        color: var(--muted);
+      }
+
+      .callout {
+        margin: 16px 0;
+        padding: 14px 16px;
+        border-left: 5px solid var(--accent);
+        background: #edf8f6;
+        border-radius: 0 var(--radius) var(--radius) 0;
+      }
+
+      .danger {
+        border-left-color: var(--danger);
+        background: #fff1ef;
+      }
+
+      .ok {
+        border-left-color: var(--ok);
+        background: #eef8f1;
+      }
+
+      pre {
+        position: relative;
+        margin: 14px 0 0;
+        padding: 16px;
+        overflow-x: auto;
+        border: 1px solid #cfd8d5;
+        border-radius: var(--radius);
+        background: var(--code-bg);
+        color: var(--code);
+        font-size: 0.93rem;
+        line-height: 1.55;
+      }
+
+      code {
+        font-family:
+          "SFMono-Regular",
+          "Cascadia Code",
+          "D2Coding",
+          ui-monospace,
+          monospace;
+        font-size: 0.94em;
+      }
+
+      .copy {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        border: 1px solid #bcc9c5;
+        border-radius: 6px;
+        background: #ffffff;
+        color: var(--ink);
+        cursor: pointer;
+        font: inherit;
+        font-size: 0.78rem;
+        font-weight: 800;
+        padding: 5px 8px;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 14px;
+        font-size: 0.96rem;
+      }
+
+      th,
+      td {
+        padding: 11px 10px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        background: #f2f7f5;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        min-height: 28px;
+        padding: 4px 9px;
+        border-radius: 999px;
+        background: #eef4f2;
+        color: var(--accent);
+        font-weight: 800;
+        font-size: 0.82rem;
+      }
+
+      .footer {
+        margin-top: 24px;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      @media (max-width: 860px) {
+        header,
+        .grid,
+        .two {
+          grid-template-columns: 1fr;
+        }
+
+        header {
+          padding: 22px;
+        }
+
+        section {
+          padding: 20px;
+        }
+
+        .status-box {
+          min-width: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <div>
+          <span class="pill">AIoT SerBot / Jetson</span>
+          <h1>SerBot 제어 라이브러리 사용설명서</h1>
+          <p class="subtitle">
+            이 문서는 이 프로젝트에서 만든 <code>goal</code> 명령어와
+            <code>serbot_control</code> Python 라이브러리로 로봇을 안전하게 제어하고,
+            초음파, 카메라, LiDAR 값을 가져오는 방법을 정리한 매뉴얼입니다.
+          </p>
+        </div>
+        <aside class="status-box">
+          <strong>현재 기본 대상</strong>
+          <code>soda@threnody.local</code>
+          <p>현재 확인된 Wi-Fi IP는 <code>192.168.0.68</code>입니다.</p>
+          <strong>안전 제한</strong>
+          <p>주행 속도 예제와 기본값은 <code>10</code> 이하로 맞췄습니다.</p>
+        </aside>
+      </header>
+
+      <nav aria-label="문서 목차">
+        <a href="#quickstart">빠른 시작</a>
+        <a href="#safety">안전 규칙</a>
+        <a href="#commands">명령어 목록</a>
+        <a href="#python">Python 사용법</a>
+        <a href="#sensors">센서</a>
+        <a href="#camera">카메라 스트리밍</a>
+        <a href="#dashboard">대시보드</a>
+        <a href="#trouble">문제 해결</a>
+      </nav>
+
+      <section id="quickstart">
+        <h2>1. 빠른 시작</h2>
+        <p>
+          로봇이 같은 네트워크에 있고 SSH가 살아 있으면 아래 순서로 확인합니다.
+          처음 연결한 로봇에는 런타임을 한 번 배포해야 합니다.
+        </p>
+        <pre><button class="copy">복사</button><code>./goal status
+./goal deploy-runtime
+./goal probe</code></pre>
+        <div class="callout ok">
+          <strong>정상 기준:</strong>
+          <code>status</code>는 호스트명과 IP를 출력하고,
+          <code>probe</code>는 <code>can_stop=ok</code>와 초음파 배열을 출력합니다.
+        </div>
+      </section>
+
+      <section id="safety">
+        <h2>2. 안전 규칙</h2>
+        <div class="grid">
+          <article class="tile">
+            <h3>속도 제한</h3>
+            <p>현재 문서와 기본값은 <code>10</code> 이하를 기준으로 합니다.</p>
+          </article>
+          <article class="tile">
+            <h3>짧게 테스트</h3>
+            <p>처음 주행은 <code>0.2~1.0초</code> 정도로 짧게 보냅니다.</p>
+          </article>
+          <article class="tile">
+            <h3>정지 우선</h3>
+            <p>이상하면 바로 <code>./goal stop</code>을 보냅니다.</p>
+          </article>
+        </div>
+        <div class="callout danger">
+          <strong>주의:</strong> 예전에 속도 <code>99</code>는 위협적으로 빨랐습니다.
+          지금 문서에서는 사용하지 않습니다.
+        </div>
+      </section>
+
+      <section id="commands">
+        <h2>3. 자주 쓰는 명령어</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>목적</th>
+              <th>명령어</th>
+              <th>설명</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>연결 확인</td>
+              <td><code>./goal status</code></td>
+              <td>SSH 접속, 호스트명, IP, 커널을 확인합니다.</td>
+            </tr>
+            <tr>
+              <td>런타임 배포</td>
+              <td><code>./goal deploy-runtime</code></td>
+              <td>모터/초음파용 원격 런타임을 Jetson에 복사합니다.</td>
+            </tr>
+            <tr>
+              <td>안전 정지</td>
+              <td><code>./goal stop</code></td>
+              <td>CAN 정지 프레임을 반복 전송합니다.</td>
+            </tr>
+            <tr>
+              <td>초음파 확인</td>
+              <td><code>./goal probe</code></td>
+              <td>정지 프레임 후 초음파 값을 읽습니다. 주행하지 않습니다.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>방향 주행</h3>
+        <pre><button class="copy">복사</button><code>./goal forward --speed 10 --seconds 1
+./goal backward --speed 8 --seconds 1
+./goal spin-left --speed 8 --seconds 0.5
+./goal spin-right --speed 8 --seconds 0.5
+./goal stop</code></pre>
+
+        <h3>정밀 제어</h3>
+        <p>
+          <code>drive</code>는 선속도/각속도 느낌으로 제어합니다.
+          <code>linear &gt; 0</code>은 전진, <code>angular &gt; 0</code>은 좌회전 성향입니다.
+        </p>
+        <pre><button class="copy">복사</button><code>./goal drive --linear 8 --angular 0 --seconds 0.8
+./goal drive --linear 10 --angular 3 --seconds 0.8
+./goal drive --linear 0 --angular 8 --seconds 0.4 --guard-direction none</code></pre>
+
+        <p>
+          <code>raw</code>는 좌/우 휠을 직접 제어합니다.
+          이 로봇의 직진 부호는 <code>left=양수</code>, <code>right=음수</code>입니다.
+        </p>
+        <pre><button class="copy">복사</button><code>./goal raw --left 10 --right -8 --seconds 0.5
+./goal raw --left 0 --right 0 --seconds 0.1</code></pre>
+
+        <h3>시퀀스 실행</h3>
+        <p>
+          여러 짧은 동작은 맥에서 SSH를 여러 번 보내지 말고,
+          <code>sequence</code>로 Jetson 안에서 한 번에 실행합니다.
+        </p>
+        <pre><button class="copy">복사</button><code>./goal sequence --json '[
+  {"linear": 8, "angular": 0, "seconds": 0.5},
+  {"linear": 10, "angular": 3, "seconds": 0.7},
+  {"left": 0, "right": 0, "seconds": 0.1, "guard_direction": "none"}
+]'</code></pre>
+      </section>
+
+      <section id="python">
+        <h2>4. Python 코드에서 쓰기</h2>
+        <p>
+          자유롭게 코딩할 때는 <code>serbot_control</code> 패키지를 사용합니다.
+          명령어와 같은 기능이 Python 함수로 열려 있습니다.
+        </p>
+        <pre><button class="copy">복사</button><code>from serbot_control import MotionStep, SerBot
+
+robot = SerBot.from_env()
+
+print(robot.status())
+robot.forward(speed=10, seconds=1)
+robot.stop()
+
+robot.drive(linear=10, angular=2, seconds=0.6)
+robot.wheels(left=10, right=-8, seconds=0.4)
+
+robot.sequence([
+    MotionStep.vector(8, 0, seconds=0.5),
+    MotionStep.vector(10, 3, seconds=0.7),
+    MotionStep.wheels(0, 0, seconds=0.1, guard_direction="none"),
+])</code></pre>
+        <p>센서까지 같이 쓰는 예시는 아래 파일에 있습니다.</p>
+        <pre><button class="copy">복사</button><code>python3 examples/precision_control.py</code></pre>
+      </section>
+
+      <section id="sensors">
+        <h2>5. 센서 읽기</h2>
+        <div class="grid">
+          <article class="tile">
+            <h3>초음파</h3>
+            <pre><button class="copy">복사</button><code>./goal ultra --count 3
+./goal probe</code></pre>
+            <p><code>raw_cm</code>, <code>front_min</code>, <code>rear_min</code>을 봅니다.</p>
+          </article>
+          <article class="tile">
+            <h3>LiDAR</h3>
+            <pre><button class="copy">복사</button><code>./goal lidar --output artifacts/lidar/latest-scan.json</code></pre>
+            <p>한 프레임의 <code>/scan</code>을 JSON으로 저장하고 요약을 출력합니다.</p>
+          </article>
+          <article class="tile">
+            <h3>카메라 스냅샷</h3>
+            <pre><button class="copy">복사</button><code>./goal camera --output artifacts/camera/latest.jpg</code></pre>
+            <p>한 장의 JPEG를 저장합니다. 실시간 영상은 다음 섹션을 사용합니다.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="camera">
+        <h2>6. 카메라 스트리밍</h2>
+        <p>
+          SSH로 프레임을 계속 가져오면 끊깁니다. 그래서 실시간 영상은 로봇에서
+          MJPEG 서버를 띄우고, 브라우저가 내부망으로 직접 접속합니다.
+        </p>
+        <pre><button class="copy">복사</button><code>./goal camera-stream start --port 8766 --width 640 --height 360 --fps 10 --quality 70
+./goal camera-stream url
+./goal camera-stream status</code></pre>
+        <div class="callout">
+          <strong>안정값:</strong> <code>640x360 / 10fps / quality 70</code>은 실제로 약
+          <code>8~9fps</code> 정도 수신됐습니다.
+        </div>
+        <p>30fps를 시도할 때는 낮은 해상도로 시작합니다.</p>
+        <pre><button class="copy">복사</button><code>./goal camera-stream start --port 8766 --width 424 --height 240 --fps 30 --quality 65</code></pre>
+        <p>스트림 주소는 보통 아래 형식입니다.</p>
+        <pre><button class="copy">복사</button><code>http://threnody.local:8766/stream.mjpg</code></pre>
+      </section>
+
+      <section id="dashboard">
+        <h2>7. 웹 대시보드</h2>
+        <p>브라우저에서 주행, 초음파, 맵, 카메라 스트림을 같이 볼 수 있습니다.</p>
+        <pre><button class="copy">복사</button><code>python3 dashboard/server.py \
+  --bridge-mode ssh \
+  --ssh-target soda@threnody.local \
+  --ssh-password soda \
+  --runtime-path /home/soda/ros_ws/tools/serbot_runtime.py \
+  --camera-stream-url http://threnody.local:8766/stream.mjpg</code></pre>
+        <pre><button class="copy">복사</button><code>http://127.0.0.1:8765</code></pre>
+      </section>
+
+      <section id="trouble">
+        <h2>8. 문제 해결</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>증상</th>
+              <th>확인할 것</th>
+              <th>명령어</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>로봇 SSH가 안 됨</td>
+              <td>mDNS 이름과 IP를 다시 찾습니다.</td>
+              <td><code>dns-sd -B _ssh._tcp local</code></td>
+            </tr>
+            <tr>
+              <td><code>goal</code>이 다른 로봇을 봄</td>
+              <td>명령마다 target을 지정합니다.</td>
+              <td><code>./goal --target soda@threnody.local status</code></td>
+            </tr>
+            <tr>
+              <td>카메라 스트림이 안 뜸</td>
+              <td>서버 상태와 URL을 확인합니다.</td>
+              <td><code>./goal camera-stream status</code></td>
+            </tr>
+            <tr>
+              <td>LiDAR가 느리게 뜸</td>
+              <td>첫 스캔까지 시간이 걸릴 수 있습니다.</td>
+              <td><code>./goal lidar --output artifacts/lidar/latest-scan.json</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <p class="footer">
+        관련 파일:
+        <code>goal</code>,
+        <code>serbot_control/</code>,
+        <code>tools/serbot_runtime.py</code>,
+        <code>tools/camera_stream_server.py</code>,
+        <code>SERBOT_CONTROL.md</code>
+      </p>
+    </main>
+
+    <script>
+      document.querySelectorAll("pre").forEach((block) => {
+        const button = block.querySelector(".copy");
+        const code = block.querySelector("code");
+        if (!button || !code) return;
+        button.addEventListener("click", async () => {
+          try {
+            await navigator.clipboard.writeText(code.textContent.trim());
+            button.textContent = "복사됨";
+            setTimeout(() => {
+              button.textContent = "복사";
+            }, 1200);
+          } catch (error) {
+            button.textContent = "실패";
+            setTimeout(() => {
+              button.textContent = "복사";
+            }, 1200);
+          }
+        });
+      });
+    </script>
+  </body>
+</html>

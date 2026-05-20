@@ -19,6 +19,8 @@ docs/serbot-control-guide.html
 - Robot runtime: `/home/soda/ros_ws/tools/serbot_runtime.py`
 - Camera stream server: `/home/soda/ros_ws/tools/camera_stream_server.py`
 - ROS distro for LiDAR: `foxy`
+- Safe max speed: `10`
+- Safe max motion duration: `10s`
 
 Override them per command:
 
@@ -34,6 +36,14 @@ export SERBOT_PASSWORD=soda
 export SERBOT_RUNTIME=/home/soda/ros_ws/tools/serbot_runtime.py
 export SERBOT_CAMERA_STREAM=/home/soda/ros_ws/tools/camera_stream_server.py
 export SERBOT_ROS_DISTRO=foxy
+export SERBOT_SAFE_MAX_SPEED=10
+export SERBOT_MAX_MOTION_SECONDS=10
+```
+
+Unsafe override, for controlled testing only:
+
+```bash
+export SERBOT_ALLOW_UNSAFE_SPEED=1
 ```
 
 ## Command Usage
@@ -41,13 +51,17 @@ export SERBOT_ROS_DISTRO=foxy
 Check connection:
 
 ```bash
+./goal config
+./goal discover
 ./goal status
+./goal doctor
 ```
 
 Deploy the robot-side CAN/ultrasonic runtime:
 
 ```bash
 ./goal deploy-runtime
+./goal deploy-all
 ```
 
 Move:
@@ -78,7 +92,8 @@ Control meaning:
 - `angular < 0`: right rotation tendency
 - `raw --left/--right`: direct signed wheel command in the robot's CAN speed units
 - wheel range accepted by the runtime: `-120..120`
-- practical starting range: `6..10`
+- safe default range enforced by the local client: `-10..10`
+- practical starting range: `4..8`
 
 Run a full motion script inside the robot with one SSH call:
 

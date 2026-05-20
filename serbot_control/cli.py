@@ -11,8 +11,10 @@ from typing import Any
 
 from .client import (
     DEFAULT_CAMERA_STREAM_PATH,
+    DEFAULT_MAX_MOTION_SECONDS,
     DEFAULT_PASSWORD,
     DEFAULT_RUNTIME_PATH,
+    DEFAULT_SAFE_MAX_SPEED,
     DEFAULT_TARGET,
     RobotConfig,
     SerBot,
@@ -40,16 +42,31 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--camera-stream-path", default=os.environ.get("SERBOT_CAMERA_STREAM", DEFAULT_CAMERA_STREAM_PATH))
     parser.add_argument("--ros-distro", default=os.environ.get("SERBOT_ROS_DISTRO", "foxy"))
     parser.add_argument("--connect-timeout", type=int, default=8)
+    parser.add_argument("--safe-max-speed", type=int, default=int(os.environ.get("SERBOT_SAFE_MAX_SPEED", DEFAULT_SAFE_MAX_SPEED)))
+    parser.add_argument("--max-motion-seconds", type=float, default=float(os.environ.get("SERBOT_MAX_MOTION_SECONDS", DEFAULT_MAX_MOTION_SECONDS)))
+    parser.add_argument(
+        "--allow-unsafe-speed",
+        action="store_true",
+        default=os.environ.get("SERBOT_ALLOW_UNSAFE_SPEED", "").lower() in {"1", "true", "yes", "on"},
+        help="allow speeds/durations above the configured safety caps",
+    )
 
     subparsers = parser.add_subparsers(dest="command")
     subparsers.required = True
 
+    subparsers.add_parser("config", help="print effective local configuration without exposing the password")
+    discover = subparsers.add_parser("discover", help="probe common robot hostnames/IPs for an open SSH port")
+    discover.add_argument("--candidates", default="", help="comma-separated hostnames/IPs; defaults to known SerBot candidates")
+    discover.add_argument("--timeout", type=float, default=0.8)
+
     subparsers.add_parser("status", help="check SSH and print robot identity")
+    subparsers.add_parser("doctor", help="run non-motion connection/runtime/sensor diagnostics")
     subparsers.add_parser("probe", help="probe runtime, CAN stop, and ultrasonic path")
     subparsers.add_parser("stop", help="send stop frames")
 
     deploy = subparsers.add_parser("deploy-runtime", help="copy tools/serbot_runtime.py to the robot")
     deploy.add_argument("--local-path", default=None)
+    subparsers.add_parser("deploy-all", help="copy runtime and camera stream server to the robot")
 
     for name in ("forward", "backward", "spin-left", "spin-right"):
         move = subparsers.add_parser(name, help=f"run {name} movement")
@@ -104,8 +121,8 @@ def build_parser() -> argparse.ArgumentParser:
     stream.add_argument("--device", default="/dev/video0")
     stream.add_argument("--width", type=int, default=640)
     stream.add_argument("--height", type=int, default=360)
-    stream.add_argument("--fps", type=float, default=15.0)
-    stream.add_argument("--quality", type=int, default=75)
+    stream.add_argument("--fps", type=float, default=10.0)
+    stream.add_argument("--quality", type=int, default=70)
     stream.add_argument("--no-deploy", action="store_true")
 
     lidar = subparsers.add_parser("lidar", help="capture one LiDAR LaserScan frame")
@@ -113,7 +130,7 @@ def build_parser() -> argparse.ArgumentParser:
     lidar.add_argument("--no-summary", action="store_true")
 
     goal = subparsers.add_parser("goal", help="dispatch a named goal")
-    goal.add_argument("name", choices=["status", "probe", "stop", "forward", "backward", "spin-left", "spin-right", "drive", "raw", "sequence", "ultra", "camera", "lidar"])
+    goal.add_argument("name", choices=["config", "status", "doctor", "probe", "stop", "forward", "backward", "spin-left", "spin-right", "drive", "raw", "sequence", "ultra", "camera", "lidar"])
     goal.add_argument("--speed", type=int, default=10)
     goal.add_argument("--seconds", type=float, default=0.3)
     goal.add_argument("--period", type=float, default=0.05)
@@ -144,6 +161,9 @@ def robot_from_args(args: argparse.Namespace) -> SerBot:
             camera_stream_path=args.camera_stream_path,
             ros_distro=args.ros_distro,
             connect_timeout=args.connect_timeout,
+            safe_max_speed=args.safe_max_speed,
+            max_motion_seconds=args.max_motion_seconds,
+            allow_unsafe_speed=args.allow_unsafe_speed,
         )
     )
 
@@ -154,14 +174,23 @@ def main(argv: list[str] | None = None) -> int:
     robot = robot_from_args(args)
 
     try:
-        if args.command == "status":
+        if args.command == "config":
+            print_value(robot.config_snapshot())
+        elif args.command == "discover":
+            candidates = [item.strip() for item in args.candidates.split(",") if item.strip()] if args.candidates else None
+            print_value(SerBot.discover_targets(candidates, timeout=args.timeout))
+        elif args.command == "status":
             print_value(robot.status())
+        elif args.command == "doctor":
+            print_value(robot.doctor())
         elif args.command == "probe":
             print_value(robot.probe())
         elif args.command == "stop":
             print_value(robot.stop())
         elif args.command == "deploy-runtime":
             print_value(robot.deploy_runtime(args.local_path))
+        elif args.command == "deploy-all":
+            print_value(robot.deploy_all())
         elif args.command in ("forward", "backward", "spin-left", "spin-right"):
             print_value(
                 robot.move(

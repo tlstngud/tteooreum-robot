@@ -15,6 +15,7 @@ import math
 import os
 import re
 import shlex
+import socket
 import subprocess
 import time
 from dataclasses import dataclass
@@ -27,12 +28,43 @@ DEFAULT_PASSWORD = "soda"
 DEFAULT_RUNTIME_PATH = "/home/soda/ros_ws/tools/serbot_runtime.py"
 DEFAULT_CAMERA_STREAM_PATH = "/home/soda/ros_ws/tools/camera_stream_server.py"
 DEFAULT_ROS_DISTRO = "foxy"
+DEFAULT_SAFE_MAX_SPEED = 10
+DEFAULT_MAX_MOTION_SECONDS = 10.0
 
 VALID_DIRECTIONS = {"forward", "backward", "spin-left", "spin-right"}
+DEFAULT_DISCOVERY_CANDIDATES = (
+    "threnody.local",
+    "revalue.local",
+    "murks.local",
+    "192.168.0.68",
+    "192.168.0.7",
+    "192.168.101.101",
+)
 
 
 class SerBotError(RuntimeError):
     """Raised when the local client cannot complete a robot command."""
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    if value is None or value.strip() == "":
+        return default
+    return int(value)
+
+
+def _env_float(name: str, default: float) -> float:
+    value = os.environ.get(name)
+    if value is None or value.strip() == "":
+        return default
+    return float(value)
 
 
 @dataclass
@@ -43,6 +75,9 @@ class RobotConfig:
     camera_stream_path: str = DEFAULT_CAMERA_STREAM_PATH
     ros_distro: str = DEFAULT_ROS_DISTRO
     connect_timeout: int = 8
+    safe_max_speed: int = DEFAULT_SAFE_MAX_SPEED
+    max_motion_seconds: float = DEFAULT_MAX_MOTION_SECONDS
+    allow_unsafe_speed: bool = False
 
     @classmethod
     def from_env(cls) -> "RobotConfig":
@@ -52,7 +87,24 @@ class RobotConfig:
             runtime_path=os.environ.get("SERBOT_RUNTIME", DEFAULT_RUNTIME_PATH),
             camera_stream_path=os.environ.get("SERBOT_CAMERA_STREAM", DEFAULT_CAMERA_STREAM_PATH),
             ros_distro=os.environ.get("SERBOT_ROS_DISTRO", DEFAULT_ROS_DISTRO),
+            connect_timeout=_env_int("SERBOT_CONNECT_TIMEOUT", 8),
+            safe_max_speed=_env_int("SERBOT_SAFE_MAX_SPEED", DEFAULT_SAFE_MAX_SPEED),
+            max_motion_seconds=_env_float("SERBOT_MAX_MOTION_SECONDS", DEFAULT_MAX_MOTION_SECONDS),
+            allow_unsafe_speed=_env_bool("SERBOT_ALLOW_UNSAFE_SPEED", False),
         )
+
+    def safe_dict(self) -> dict[str, Any]:
+        return {
+            "target": self.target,
+            "password_set": bool(self.password),
+            "runtime_path": self.runtime_path,
+            "camera_stream_path": self.camera_stream_path,
+            "ros_distro": self.ros_distro,
+            "connect_timeout": self.connect_timeout,
+            "safe_max_speed": self.safe_max_speed,
+            "max_motion_seconds": self.max_motion_seconds,
+            "allow_unsafe_speed": self.allow_unsafe_speed,
+        }
 
 
 @dataclass
@@ -337,6 +389,64 @@ class SerBot:
     def from_env(cls) -> "SerBot":
         return cls(RobotConfig.from_env())
 
+    @staticmethod
+    def discover_targets(
+        candidates: Iterable[str] | None = None,
+        *,
+        port: int = 22,
+        timeout: float = 0.8,
+    ) -> list[dict[str, Any]]:
+        if candidates is None:
+            env_candidates = os.environ.get("SERBOT_DISCOVERY_CANDIDATES", "")
+            candidates = [item.strip() for item in env_candidates.split(",") if item.strip()] or DEFAULT_DISCOVERY_CANDIDATES
+
+        seen: set[str] = set()
+        results: list[dict[str, Any]] = []
+        for candidate in candidates:
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            item: dict[str, Any] = {
+                "target": candidate,
+                "resolved": [],
+                "ssh_open": False,
+                "banner": None,
+                "error": None,
+            }
+            try:
+                resolved = socket.getaddrinfo(candidate, port, type=socket.SOCK_STREAM)
+                addresses = []
+                for family, socktype, proto, _, sockaddr in resolved:
+                    address = sockaddr[0]
+                    if address not in addresses:
+                        addresses.append(address)
+                item["resolved"] = addresses
+            except OSError as exc:
+                item["error"] = str(exc)
+                results.append(item)
+                continue
+
+            for address in item["resolved"]:
+                sock = socket.socket(socket.AF_INET if ":" not in address else socket.AF_INET6, socket.SOCK_STREAM)
+                sock.settimeout(timeout)
+                try:
+                    sock.connect((address, port))
+                    item["ssh_open"] = True
+                    try:
+                        item["banner"] = sock.recv(120).decode("utf-8", "ignore").strip()
+                    except OSError:
+                        item["banner"] = ""
+                    break
+                except OSError as exc:
+                    item["error"] = str(exc)
+                finally:
+                    sock.close()
+            results.append(item)
+        return results
+
+    def config_snapshot(self) -> dict[str, Any]:
+        return self.config.safe_dict()
+
     def status(self) -> dict[str, Any]:
         result = self.transport.run_text(
             ["bash", "-lc", "hostname; hostname -I; uname -a; whoami"],
@@ -349,6 +459,96 @@ class SerBot:
             "kernel": lines[2] if len(lines) > 2 else None,
             "user": lines[3] if len(lines) > 3 else None,
             "target": self.config.target,
+        }
+
+    def network_interfaces(self) -> list[dict[str, str]]:
+        script = r"""
+python3 - <<'PY'
+import json
+from pathlib import Path
+
+items = []
+for address_file in sorted(Path('/sys/class/net').glob('*/address')):
+    iface = address_file.parent.name
+    try:
+        address = address_file.read_text().strip()
+    except Exception:
+        address = ''
+    try:
+        state = (address_file.parent / 'operstate').read_text().strip()
+    except Exception:
+        state = ''
+    items.append({'interface': iface, 'mac': address, 'state': state})
+print(json.dumps(items, ensure_ascii=False))
+PY
+"""
+        result = self.transport.run_script(script, timeout=10.0).check()
+        return json.loads(result.stdout.strip().splitlines()[-1])
+
+    def doctor(self) -> dict[str, Any]:
+        report: dict[str, Any] = {
+            "config": self.config.safe_dict(),
+            "checks": {},
+            "ok": False,
+        }
+
+        try:
+            report["status"] = self.status()
+            report["checks"]["ssh"] = "ok"
+        except Exception as exc:
+            report["checks"]["ssh"] = f"error: {exc}"
+            return report
+
+        script = f"""
+python3 - <<'PY'
+import importlib.util
+import json
+from pathlib import Path
+
+def exists(path):
+    return Path(path).exists()
+
+def text(path):
+    try:
+        return Path(path).read_text().strip()
+    except Exception:
+        return None
+
+payload = {{
+    "runtime_exists": exists({self.config.runtime_path!r}),
+    "camera_stream_exists": exists({self.config.camera_stream_path!r}),
+    "can0_state": text("/sys/class/net/can0/operstate"),
+    "video_devices": sorted(str(path) for path in Path("/dev").glob("video*")),
+    "tty_usb": sorted(str(path) for path in Path("/dev").glob("ttyUSB*")),
+    "python_can": importlib.util.find_spec("can") is not None,
+    "opencv": importlib.util.find_spec("cv2") is not None,
+}}
+print(json.dumps(payload, ensure_ascii=False))
+PY
+"""
+        try:
+            remote = self.transport.run_script(script, timeout=12.0).check()
+            report["remote"] = json.loads(remote.stdout.strip().splitlines()[-1])
+        except Exception as exc:
+            report["remote_error"] = str(exc)
+
+        try:
+            report["network_interfaces"] = self.network_interfaces()
+        except Exception as exc:
+            report["network_interfaces_error"] = str(exc)
+
+        remote_info = report.get("remote", {})
+        report["ok"] = bool(
+            report["checks"].get("ssh") == "ok"
+            and remote_info.get("runtime_exists")
+            and remote_info.get("can0_state") is not None
+        )
+        return report
+
+    def deploy_all(self) -> dict[str, Any]:
+        return {
+            "runtime": self.deploy_runtime(),
+            "camera_stream": self.deploy_camera_stream_server(),
         }
 
     def deploy_runtime(self, local_path: str | Path | None = None) -> dict[str, str]:
@@ -384,8 +584,8 @@ class SerBot:
         device: str = "/dev/video0",
         width: int = 640,
         height: int = 360,
-        fps: float = 15.0,
-        quality: int = 75,
+        fps: float = 10.0,
+        quality: int = 70,
         deploy: bool = True,
     ) -> dict[str, Any]:
         if deploy:
@@ -523,6 +723,37 @@ PY"""
     def stop(self) -> str:
         return self._runtime(["stop"], timeout=8.0).stdout.strip()
 
+    def _check_motion_seconds(self, seconds: float) -> None:
+        seconds = float(seconds)
+        if seconds <= 0:
+            raise SerBotError("motion duration must be greater than 0")
+        if not self.config.allow_unsafe_speed and seconds > self.config.max_motion_seconds:
+            raise SerBotError(
+                "motion duration %.2fs exceeds safe max %.2fs; set SERBOT_MAX_MOTION_SECONDS or "
+                "SERBOT_ALLOW_UNSAFE_SPEED=1 if you really need this"
+                % (seconds, self.config.max_motion_seconds)
+            )
+
+    def _check_speed(self, label: str, value: float) -> None:
+        value = float(value)
+        if self.config.allow_unsafe_speed:
+            return
+        limit = float(self.config.safe_max_speed)
+        if abs(value) > limit:
+            raise SerBotError(
+                "%s speed %.2f exceeds safe max %.2f; lower the value or set "
+                "SERBOT_ALLOW_UNSAFE_SPEED=1"
+                % (label, value, limit)
+            )
+
+    def _check_sequence_step(self, step: dict[str, Any], index: int) -> None:
+        self._check_motion_seconds(float(step.get("seconds", 0.3)))
+        if "speed" in step:
+            self._check_speed(f"sequence[{index}].speed", float(step["speed"]))
+        for key in ("linear", "angular", "left", "right"):
+            if key in step:
+                self._check_speed(f"sequence[{index}].{key}", float(step[key]))
+
     def move(
         self,
         direction: str,
@@ -537,6 +768,8 @@ PY"""
     ) -> str:
         if direction not in VALID_DIRECTIONS:
             raise ValueError(f"direction must be one of {sorted(VALID_DIRECTIONS)}")
+        self._check_speed("move", speed)
+        self._check_motion_seconds(seconds)
         parts = [
             "--ultra-backend",
             ultra_backend,
@@ -580,6 +813,9 @@ PY"""
         guard_cm: float = 20.0,
         allow_blind: bool = False,
     ) -> str:
+        self._check_speed("left wheel", left)
+        self._check_speed("right wheel", right)
+        self._check_motion_seconds(seconds)
         parts = [
             "raw",
             "--left",
@@ -617,6 +853,9 @@ PY"""
         allow_blind: bool = False,
         limit: int = 120,
     ) -> str:
+        self._check_speed("linear", linear)
+        self._check_speed("angular", angular)
+        self._check_motion_seconds(seconds)
         parts = [
             "drive",
             "--linear",
@@ -647,6 +886,8 @@ PY"""
         payload = [self._step_payload(step) for step in steps]
         if not payload:
             raise ValueError("sequence needs at least one step")
+        for index, step in enumerate(payload):
+            self._check_sequence_step(step, index)
         parts = ["sequence", "--json", json.dumps(payload, separators=(",", ":"))]
         if stop_between:
             parts.append("--stop-between")
@@ -680,7 +921,13 @@ PY"""
         guard_cm: float = 20.0,
         allow_blind: bool = False,
     ) -> str:
-        speed_text = ",".join(str(int(speed)) for speed in speeds)
+        speed_values = [int(speed) for speed in speeds]
+        if not speed_values:
+            raise ValueError("ramp needs at least one speed")
+        speed_text = ",".join(str(speed) for speed in speed_values)
+        for speed in speed_values:
+            self._check_speed("ramp", speed)
+        self._check_motion_seconds(step_seconds)
         parts = [
             "ramp",
             direction,
@@ -879,6 +1126,10 @@ PY
             return self.lidar_scan(**kwargs)
         if action == "status":
             return self.status()
+        if action == "config":
+            return self.config_snapshot()
+        if action == "doctor":
+            return self.doctor()
         if action == "probe":
             return self.probe()
         if action == "drive":

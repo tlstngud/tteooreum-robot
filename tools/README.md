@@ -55,12 +55,17 @@ That command:
 Higher-level local control:
 
 ```bash
+./goal config
+./goal discover
 ./goal status
+./goal doctor
 ./goal forward --speed 10 --seconds 1
 ./goal ultra --count 3
 ./goal camera --output artifacts/camera/latest.jpg
 ./goal lidar --output artifacts/lidar/latest-scan.json
 ```
+
+The local `goal` client enforces a default safe speed cap of `10` and a default motion-duration cap of `10s` before it sends SSH commands.
 
 For real-time camera video on the same LAN, start the robot-side MJPEG streamer:
 

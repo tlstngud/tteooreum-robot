@@ -10,6 +10,16 @@ Jetson 기반 Hanback AIoT SerBot을 맥/PC에서 쉽게 제어하기 위한 프
 
 기본 안전 원칙은 단순합니다. 처음에는 속도 `10` 이하만 사용합니다.
 
+## 이번 버전에서 강화된 점
+
+- `goal config`: 현재 설정을 비밀번호 없이 확인합니다.
+- `goal discover`: 알려진 로봇 이름과 IP의 SSH 포트를 탐색합니다.
+- `goal doctor`: 모터를 움직이지 않고 SSH, 런타임, CAN, 카메라, LiDAR 장치를 진단합니다.
+- `goal deploy-all`: 모터/초음파 런타임과 카메라 스트림 서버를 한 번에 배포합니다.
+- 모든 주행 계열 명령은 기본적으로 속도 `10`을 넘으면 실행 전에 차단합니다.
+- 너무 긴 주행 시간도 기본적으로 `10초`를 넘기면 차단합니다.
+- Python 라이브러리와 CLI가 같은 안전 정책을 공유합니다.
+
 ## 폴더 구조
 
 ```text
@@ -91,23 +101,56 @@ export SERBOT_ROS_DISTRO=foxy
 
 비밀번호 SSH를 쓰면 로컬에 `sshpass`가 필요할 수 있습니다. 키 기반 SSH를 설정했다면 `SERBOT_PASSWORD`를 비워도 됩니다.
 
+안전 제한도 환경변수로 바꿀 수 있습니다.
+
+```bash
+export SERBOT_SAFE_MAX_SPEED=10
+export SERBOT_MAX_MOTION_SECONDS=10
+```
+
+정말 제한을 풀어야 할 때만 아래 값을 씁니다.
+
+```bash
+export SERBOT_ALLOW_UNSAFE_SPEED=1
+```
+
+이 값은 수업/실험 기본값으로 권장하지 않습니다.
+
 ## 처음 연결할 때
 
 1. 로봇과 맥/PC가 같은 공유기에 있는지 확인합니다.
 
-2. SSH 연결을 확인합니다.
+2. 현재 설정을 확인합니다.
+
+```bash
+./goal config
+```
+
+3. 로봇을 자동 탐색합니다.
+
+```bash
+./goal discover
+```
+
+4. SSH 연결을 확인합니다.
 
 ```bash
 ./goal status
 ```
 
-3. 로봇 쪽 런타임을 배포합니다.
+5. 로봇 쪽 런타임과 카메라 서버를 배포합니다.
 
 ```bash
-./goal deploy-runtime
+./goal deploy-all
 ```
 
-4. 모터는 움직이지 않고 CAN 정지와 초음파만 확인합니다.
+6. 모터는 움직이지 않고 전체 상태를 진단합니다.
+
+```bash
+./goal doctor
+```
+
+7. 모터는 움직이지 않고 CAN 정지와 초음파만 확인합니다.
 
 ```bash
 ./goal probe
@@ -127,6 +170,14 @@ export SERBOT_ROS_DISTRO=foxy
 ./goal stop
 ```
 
+속도 `10`을 넘기면 로봇에 SSH 명령을 보내기 전에 막힙니다.
+
+```bash
+./goal forward --speed 11 --seconds 0.5
+```
+
+위 명령은 기본 설정에서는 실행되지 않습니다. 실수로 과속 명령을 보내는 것을 막기 위한 장치입니다.
+
 초음파, 카메라, LiDAR도 한 줄입니다.
 
 ```bash
@@ -143,6 +194,27 @@ export SERBOT_ROS_DISTRO=foxy
 ```
 
 브라우저에서 출력된 URL을 열면 됩니다.
+
+## goal 명령어 전체 요약
+
+| 명령어 | 움직임 여부 | 설명 |
+| --- | --- | --- |
+| `./goal config` | 안 움직임 | 현재 설정을 비밀번호 없이 출력합니다. |
+| `./goal discover` | 안 움직임 | 후보 주소의 SSH 포트를 찾습니다. |
+| `./goal status` | 안 움직임 | SSH 접속과 로봇 기본 정보를 확인합니다. |
+| `./goal doctor` | 안 움직임 | 런타임, CAN, 카메라, LiDAR 장치를 진단합니다. |
+| `./goal deploy-all` | 안 움직임 | Jetson에 필요한 런타임 파일을 배포합니다. |
+| `./goal probe` | 바퀴 정지 프레임만 전송 | CAN 정지와 초음파 값을 확인합니다. |
+| `./goal forward` | 움직임 | 전진합니다. |
+| `./goal backward` | 움직임 | 후진합니다. |
+| `./goal spin-left` | 움직임 | 제자리 좌회전합니다. |
+| `./goal spin-right` | 움직임 | 제자리 우회전합니다. |
+| `./goal drive` | 움직임 | 선속도/회전값으로 정밀 제어합니다. |
+| `./goal sequence` | 움직임 가능 | 여러 동작을 Jetson 안에서 이어서 실행합니다. |
+| `./goal ultra` | 안 움직임 | 초음파 센서값을 읽습니다. |
+| `./goal camera` | 안 움직임 | 카메라 JPEG 한 장을 저장합니다. |
+| `./goal camera-stream` | 안 움직임 | MJPEG 스트림 서버를 관리합니다. |
+| `./goal lidar` | 안 움직임 | LiDAR 한 프레임을 읽습니다. |
 
 ## 웹 대시보드
 
@@ -324,6 +396,26 @@ robot.backward(speed=6, seconds=0.5)
 robot.stop()
 ```
 
+진단부터 하는 코드는 이렇습니다.
+
+```python
+from serbot_control import SerBot
+
+robot = SerBot.from_env()
+
+print(robot.config_snapshot())
+print(robot.doctor())
+```
+
+로봇 후보 주소를 찾는 코드는 이렇습니다.
+
+```python
+from serbot_control import SerBot
+
+for item in SerBot.discover_targets():
+    print(item)
+```
+
 좌회전:
 
 ```python
@@ -465,4 +557,3 @@ curl http://127.0.0.1:8765/api/status
 - `dashboard/README.md`: 웹 대시보드 설명
 - `tools/README.md`: Jetson 런타임 설명
 - `docs/serbot-control-guide.html`: 브라우저로 보는 한국어 HTML 설명서
-

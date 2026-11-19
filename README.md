@@ -216,6 +216,26 @@ export SERBOT_ALLOW_UNSAFE_SPEED=1
 | `./goal camera-stream` | 안 움직임 | MJPEG 스트림 서버를 관리합니다. |
 | `./goal lidar` | 안 움직임 | LiDAR 한 프레임을 읽습니다. |
 
+## 로봇 내부에 영상과 센서값 기록하기
+
+`./goal`로 PC에 샘플을 저장하는 것과 달리, 아래 명령은 **Jetson에 SSH로 접속한 뒤** 저장소 폴더에서 실행합니다. LiDAR까지 기록하려면 ROS 2의 `/scan` 토픽이 실행 중이어야 합니다.
+
+**시작:** 시간 제한 없이 기록합니다. `nohup`으로 실행하면 SSH 창을 닫아도 계속 기록합니다.
+
+```bash
+git pull --ff-only
+nohup bash -c 'source /opt/ros/foxy/setup.bash && exec python3 tools/serbot_record.py' \
+  >> "$HOME/serbot-record.log" 2>&1 < /dev/null &
+```
+
+**종료:** Jetson의 같은 저장소 폴더에서 실행합니다. 파일 저장이 끝나면 저장 위치와 완료 상태를 출력합니다.
+
+```bash
+python3 tools/serbot_record.py --stop
+```
+
+영상(`camera.avi`), 초음파(`ultrasonic.jsonl`), 연속 LiDAR 스캔(`lidar.jsonl`)은 로봇의 `~/serbot-recordings/`에 저장됩니다. 바퀴는 움직이지 않으며, 남은 저장공간이 256 MiB 미만이면 자동 종료합니다. 초기 설치, 센서 선택, 타임스탬프는 [로봇 내부 녹화 상세 안내](ROBOT_RECORDING.md)를 참고하세요.
+
 ## 웹 대시보드
 
 대시보드는 한국어 UI로 만든 로봇 관제실입니다.

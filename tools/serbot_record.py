@@ -3,6 +3,7 @@
 
 import argparse
 from datetime import datetime
+import fcntl
 import json
 import math
 import multiprocessing as mp
@@ -16,6 +17,9 @@ import time
 
 DEFAULT_OUTPUT = Path.home() / "serbot-recordings"
 MIN_FREE_BYTES = 256 * 1024 * 1024
+LOCK_FILE = ".recording.lock"
+ACTIVE_LINK = ".active-recording"
+STOP_FILE = ".stop-request"
 OUTPUTS = {
     "camera": ("camera.avi", "camera_frames.jsonl"),
     "ultrasonic": ("ultrasonic.jsonl",),
@@ -203,15 +207,60 @@ def save_manifest(folder, data):
 
 
 def record(args, readers=None):
-    readers = READERS if readers is None else readers
     base = args.output_dir.expanduser().resolve()
     base.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with (base / LOCK_FILE).open("a+b") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError("a recording is already running in %s" % base) from None
+        active = base / ACTIVE_LINK
+        active.unlink(missing_ok=True)
+        try:
+            return capture(args, READERS if readers is None else readers, base, active)
+        finally:
+            active.unlink(missing_ok=True)
+
+
+def request_stop(output_dir):
+    base = output_dir.expanduser().resolve()
+    try:
+        with (base / LOCK_FILE).open("r+b") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                target = Path(os.readlink(base / ACTIVE_LINK))
+                if target.parent != Path(".") or target.name in ("", ".."):
+                    raise RuntimeError("invalid active recording directory")
+                folder = (base / target).resolve(strict=True)
+                if folder.parent != base or not folder.is_dir():
+                    raise RuntimeError("invalid active recording directory")
+                fd = os.open(folder / STOP_FILE, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+                os.close(fd)
+            else:
+                raise RuntimeError("no active recording in %s" % base)
+    except FileNotFoundError:
+        raise RuntimeError("no active recording ready to stop in %s" % base) from None
+
+    # Wait for the recorder to close the video and publish the final status.
+    expiration = time.monotonic() + 10
+    while time.monotonic() < expiration:
+        manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+        if manifest["status"] != "recording":
+            print("recording_dir=%s" % folder)
+            print("status=%s" % manifest["status"])
+            return 1 if manifest["status"] == "incomplete" else 0
+        time.sleep(0.1)
+    raise RuntimeError("stop requested; still waiting for final files in %s" % folder)
+
+
+def capture(args, readers, base, active):
     if shutil.disk_usage(base).free < MIN_FREE_BYTES:
         raise RuntimeError("recording requires at least 256 MiB of free storage")
     folder = Path(tempfile.mkdtemp(prefix=datetime.now().strftime("%Y%m%d-%H%M%S-"), dir=base))
     names = list(dict.fromkeys(args.sensors))
     started = timestamp()
-    deadline = started["monotonic_ns"] + int(args.seconds * 1e9)
+    deadline = None if args.seconds is None else started["monotonic_ns"] + int(args.seconds * 1e9)
     manifest = {
         "schema_version": 1, "status": "recording",
         "started": started, "requested_seconds": args.seconds,
@@ -219,7 +268,6 @@ def record(args, readers=None):
         "sources": {name: {"files": list(OUTPUTS[name])} for name in names},
     }
     save_manifest(folder, manifest)
-    print("recording_dir=%s" % folder, flush=True)
 
     ctx = mp.get_context("spawn")
     stop = ctx.Event()
@@ -230,11 +278,13 @@ def record(args, readers=None):
         nonlocal stop_reason
         stop_reason = signal.Signals(signum).name
 
-    previous = {
-        sig: signal.signal(sig, interrupt)
-        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
-    }
+    signals = [signal.SIGINT, signal.SIGTERM]
+    if signal.getsignal(signal.SIGHUP) != signal.SIG_IGN:
+        signals.append(signal.SIGHUP)
+    previous = {sig: signal.signal(sig, interrupt) for sig in signals}
     try:
+        active.symlink_to(folder.name, target_is_directory=True)
+        print("recording_dir=%s" % folder, flush=True)
         for name in names:
             if stop_reason is not None:
                 break
@@ -249,7 +299,10 @@ def record(args, readers=None):
                 sender.close()
             processes[name] = process, receiver
 
-        while stop_reason is None and monotonic_ns() < deadline:
+        while stop_reason is None and (deadline is None or monotonic_ns() < deadline):
+            if (folder / STOP_FILE).exists():
+                stop_reason = "requested_stop"
+                break
             if not any(process.is_alive() for process, _ in processes.values()):
                 stop_reason = "sources_exited"
                 break
@@ -292,7 +345,7 @@ def record(args, readers=None):
                 manifest["sources"][name].update(count=0, error="capture did not start")
             failed = [name for name, stats in manifest["sources"].items() if "error" in stats]
             reason = stop_reason or "duration"
-            status = "complete" if reason == "duration" else "interrupted"
+            status = "complete" if reason in ("duration", "requested_stop", "SIGINT") else "interrupted"
             if failed or reason in ("sources_exited", "low_disk_space", "recorder_error"):
                 status = "incomplete"
             manifest.update(finished=timestamp(), status=status, stop_reason=reason)
@@ -317,7 +370,11 @@ def in_range(converter, minimum, maximum):
 
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--seconds", type=in_range(float, 1, 3600), default=30)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--seconds", type=in_range(float, 1, 3600),
+                      help="optional time limit; omit to record until stopped")
+    mode.add_argument("--stop", action="store_true",
+                      help="finish the recorder using this output directory")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--sensors", nargs="+", choices=tuple(READERS), default=list(READERS))
     camera = parser.add_mutually_exclusive_group()
@@ -336,7 +393,8 @@ def build_parser():
 
 def main(argv=None):
     try:
-        return record(build_parser().parse_args(argv))
+        args = build_parser().parse_args(argv)
+        return request_stop(args.output_dir) if args.stop else record(args)
     except (OSError, RuntimeError) as exc:
         print("error: %s" % exc, file=sys.stderr)
         return 1

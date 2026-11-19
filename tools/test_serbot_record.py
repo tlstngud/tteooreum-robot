@@ -2,9 +2,14 @@ import contextlib
 import functools
 import io
 import json
+import multiprocessing as mp
+import os
 from pathlib import Path
+import signal
+import subprocess
 import sys
 import tempfile
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -34,7 +39,7 @@ def fake_scan():
 
 def synthetic_reader(name, args, folder, stop, stats):
     path = folder / recorder.OUTPUTS[name][-1]
-    with path.open("w") as output:
+    with path.open("w", encoding="utf-8", buffering=1) as output:
         while not stop.is_set():
             recorder.write_row(output, recorder.timestamp())
             stats["count"] += 1
@@ -45,6 +50,17 @@ def broken_reader(args, folder, stop, stats):
     raise RuntimeError("no camera")
 
 
+def run_continuous_recorder(output_dir):
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    args = recorder.build_parser().parse_args(["--output-dir", output_dir, "--sensors", "ultrasonic"])
+    raise SystemExit(recorder.record(args, {"ultrasonic": functools.partial(synthetic_reader, "ultrasonic")}))
+
+
+def get_recording_folder(output_dir):
+    folder, = (entry for entry in Path(output_dir).iterdir() if entry.is_dir() and not entry.is_symlink())
+    return folder
+
+
 class RecorderTests(unittest.TestCase):
     def parse(self, *args):
         return recorder.build_parser().parse_args(args)
@@ -52,10 +68,12 @@ class RecorderTests(unittest.TestCase):
     def test_default_sources_and_range(self):
         args = self.parse()
         self.assertEqual(args.sensors, ["camera", "ultrasonic", "lidar"])
-        self.assertEqual(args.seconds, 30)
+        self.assertIsNone(args.seconds)
         for value in ("nan", "inf", "0"):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 self.parse("--seconds", value)
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            self.parse("--seconds", "30", "--stop")
 
     def test_scan_record_is_strict_json(self):
         times = {"monotonic_ns": 11, "unix_ns": 12}
@@ -140,7 +158,7 @@ class RecorderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()):
             args = self.parse("--seconds", "1", "--output-dir", tmp)
             self.assertEqual(recorder.record(args, readers), 0)
-            folder, = Path(tmp).iterdir()
+            folder = get_recording_folder(tmp)
             manifest = json.loads((folder / "manifest.json").read_text())
             self.assertEqual(manifest["status"], "complete")
             for name, source in manifest["sources"].items():
@@ -156,8 +174,54 @@ class RecorderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()):
             args = self.parse("--sensors", "camera", "ultrasonic", "--seconds", "1", "--output-dir", tmp)
             self.assertEqual(recorder.record(args, readers), 1)
-            folder, = Path(tmp).iterdir()
+            folder = get_recording_folder(tmp)
             manifest = json.loads((folder / "manifest.json").read_text())
             self.assertEqual(manifest["status"], "incomplete")
             self.assertEqual(manifest["sources"]["camera"]["error"], "no camera")
             self.assertGreater(manifest["sources"]["ultrasonic"]["count"], 0)
+
+    def test_continuous_recording_survives_hangup_and_stops_from_separate_cli(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            process = mp.get_context("spawn").Process(target=run_continuous_recorder, args=(tmp,))
+            process.start()
+            try:
+                active = Path(tmp) / recorder.ACTIVE_LINK
+                log = active / "ultrasonic.jsonl"
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline and (not log.exists() or log.stat().st_size == 0):
+                    time.sleep(0.05)
+                self.assertTrue(log.exists())
+                self.assertGreater(log.stat().st_size, 0)
+                initial = json.loads((active / "manifest.json").read_text())
+                self.assertEqual(initial["status"], "recording")
+                self.assertIsNone(initial["requested_seconds"])
+                with self.assertRaisesRegex(RuntimeError, "already running"):
+                    recorder.record(self.parse("--output-dir", tmp))
+                before = log.stat().st_size
+                os.kill(process.pid, signal.SIGHUP)
+                while time.monotonic() < deadline and log.stat().st_size == before:
+                    time.sleep(0.05)
+                self.assertGreater(log.stat().st_size, before)
+                result = subprocess.run(
+                    [sys.executable, recorder.__file__, "--stop", "--output-dir", tmp],
+                    capture_output=True, text=True, timeout=15,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("status=complete", result.stdout)
+                process.join(5)
+                self.assertEqual(process.exitcode, 0)
+                self.assertFalse(active.is_symlink())
+                folder = get_recording_folder(tmp)
+                manifest = json.loads((folder / "manifest.json").read_text())
+                self.assertEqual(manifest["stop_reason"], "requested_stop")
+                self.assertGreater(manifest["sources"]["ultrasonic"]["count"], 1)
+                with self.assertRaisesRegex(RuntimeError, "no active recording"):
+                    recorder.request_stop(Path(tmp))
+            finally:
+                if process.is_alive():
+                    process.terminate()
+                    process.join(5)
+                    if process.is_alive():
+                        process.kill()
+                        process.join(5)
+                process.close()
